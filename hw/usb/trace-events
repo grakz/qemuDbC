@@ -368,3 +368,21 @@ canokey_handle_data_out(uint8_t ep_out, uint32_t out_len) "ep %d len %d"
 canokey_handle_data_in(uint8_t ep_in, uint32_t in_len) "ep %d len %d"
 canokey_realize(void)
 canokey_unrealize(void)
+
+# hcd-xhci-dbc.c
+usb_xhci_dbc_read(uint64_t off, uint32_t val) "off 0x%03" PRIx64 ", ret 0x%08x"
+usb_xhci_dbc_write(uint64_t off, uint64_t val) "off 0x%03" PRIx64 ", val 0x%08" PRIx64
+usb_xhci_dbc_enable(uint64_t dccp) "context 0x%016" PRIx64
+usb_xhci_dbc_disable(void) ""
+usb_xhci_dbc_link(bool up, uint32_t portsc, uint32_t ctrl) "up %d, dcportsc 0x%08x, dcctrl 0x%08x"
+usb_xhci_dbc_er_reset(uint64_t addr, uint32_t size) "erst 0x%016" PRIx64 ", %d entries"
+usb_xhci_dbc_ep_start(uint32_t ep, uint64_t ctx, uint64_t deq, bool ccs) "ep %d, ctx 0x%016" PRIx64 ", dequeue 0x%016" PRIx64 ", ccs %d"
+usb_xhci_dbc_fetch_trb(uint64_t addr, uint32_t type, uint64_t param, uint32_t status) "trb 0x%016" PRIx64 ", type %d, param 0x%016" PRIx64 ", status 0x%08x"
+usb_xhci_dbc_queue_event(uint32_t idx, uint32_t type, uint32_t epid, uint32_t cc, uint64_t ptr, uint32_t len) "idx %d, type %d, epid %d, cc %d, ptr 0x%016" PRIx64 ", len %d"
+usb_xhci_dbc_event_dropped(uint32_t type, uint32_t epid) "type %d, epid %d (event ring full)"
+usb_xhci_dbc_xfer_in(uint64_t trb, uint32_t len, uint32_t done) "trb 0x%016" PRIx64 ", %d bytes, %d written"
+usb_xhci_dbc_xfer_out(uint64_t trb, uint32_t len, uint32_t done) "trb 0x%016" PRIx64 ", %d bytes buffer, %d received"
+usb_xhci_dbc_state(const char *from, const char *to) "%s -> %s"
+usb_xhci_dbc_ctrl(uint8_t c) "control byte 0x%02x"
+usb_xhci_dbc_halt(uint32_t ep, uint64_t trb) "ep %d halted at trb 0x%016" PRIx64
+usb_xhci_dbc_string(const char *what, uint64_t addr, uint32_t len) "%s at 0x%016" PRIx64 ", %d bytes"

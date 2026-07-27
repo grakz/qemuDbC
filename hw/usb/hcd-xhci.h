@@ -26,6 +26,7 @@
 #include "hw/usb.h"
 #include "hw/usb/xhci.h"
 #include "system/dma.h"
+#include "chardev/char-fe.h"
 
 OBJECT_DECLARE_SIMPLE_TYPE(XHCIState, XHCI)
 
@@ -237,6 +238,77 @@ typedef struct XHCIInterrupter {
 
 } XHCIInterrupter;
 
+/*
+ * DbC port states (xHCI 1.2 section 7.6.6).  The register projection of
+ * each state is in xhci_dbc_enter(); only the LTSSM beneath them is
+ * electrical and therefore out of reach of a model.
+ */
+typedef enum XHCIDbCPortState {
+    XHCI_DBC_OFF,
+    XHCI_DBC_DISCONNECTED,
+    XHCI_DBC_DISABLED,
+    XHCI_DBC_ENABLED,
+    XHCI_DBC_CONFIGURED,
+    XHCI_DBC_RESETTING,
+    XHCI_DBC_ERROR,
+} XHCIDbCPortState;
+
+/* one of the two bulk endpoints of the Debug Capability */
+typedef struct XHCIDbCEp {
+    /* transfer ring */
+    uint64_t dequeue;
+    bool     ccs;
+    uint64_t pctx;          /* endpoint context in guest memory */
+    bool     halted;
+    bool     reload;        /* pick the dequeue pointer back up on kick */
+
+    /* data buffer fetched from the ring but not yet completed */
+    bool     trb_valid;
+    uint64_t trb_addr;
+    uint64_t trb_buf;
+    uint32_t trb_len;
+    uint32_t trb_off;
+} XHCIDbCEp;
+
+typedef struct XHCIDbCState {
+    XHCIState  *xhci;
+    CharFrontend chr;
+    CharFrontend ctrl;       /* debug host control plane, see 7.6.6 */
+
+    /* properties */
+    bool        prop_enabled;
+    bool        sbr;             /* DCST.SBR: HCRST does not reset the DbC */
+
+    bool        enabled;         /* capability present in the ext cap list */
+    bool        host_connected;  /* the far end of the debug cable is there */
+    bool        port_enabled;    /* software's DCPORTSC.PED intent */
+
+    XHCIDbCPortState state;
+    XHCIDbCPortState timer_target;
+    QEMUTimer  *timer;           /* enumeration and reset completion */
+
+    /* registers */
+    uint32_t    dcctrl;
+    uint32_t    dcportsc;
+    uint32_t    dcerstsz;
+    uint32_t    dcerstba_low;
+    uint32_t    dcerstba_high;
+    uint32_t    dcerdp_low;
+    uint32_t    dcerdp_high;
+    uint32_t    dccp_low;
+    uint32_t    dccp_high;
+    uint32_t    dcddi1;
+    uint32_t    dcddi2;
+
+    /* cached event ring segment */
+    dma_addr_t  er_start;
+    uint32_t    er_size;
+    uint32_t    er_ep_idx;
+    bool        er_pcs;
+
+    XHCIDbCEp   eps[2];
+} XHCIDbCState;
+
 typedef struct XHCIState {
     DeviceState parent;
 
@@ -248,6 +320,10 @@ typedef struct XHCIState {
     MemoryRegion mem_oper;
     MemoryRegion mem_runtime;
     MemoryRegion mem_doorbell;
+    MemoryRegion mem_dbc;
+
+    /* offset of the operational registers, i.e. the value of CAPLENGTH */
+    uint32_t off_oper;
 
     /* properties */
     uint32_t numports_2;
@@ -286,6 +362,9 @@ typedef struct XHCIState {
     XHCIInterrupter intr[XHCI_MAXINTRS];
 
     XHCIRing cmd_ring;
+
+    /* Debug Capability */
+    XHCIDbCState dbc;
 
     bool nec_quirks;
 } XHCIState;

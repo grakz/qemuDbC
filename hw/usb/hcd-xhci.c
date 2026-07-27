@@ -26,10 +26,12 @@
 #include "qemu/queue.h"
 #include "migration/vmstate.h"
 #include "hw/qdev-properties.h"
+#include "hw/qdev-properties-system.h"
 #include "trace.h"
 #include "qapi/error.h"
 
 #include "hcd-xhci.h"
+#include "hcd-xhci-dbc.h"
 
 //#define DEBUG_XHCI
 //#define DEBUG_DATA
@@ -51,11 +53,19 @@
 #define LEN_RUNTIME     ((XHCI_MAXINTRS + 1) * 0x20)
 #define LEN_DOORBELL    ((XHCI_MAXSLOTS + 1) * 0x20)
 
+/*
+ * The Debug Capability register block is chained onto the extended
+ * capability list right behind the two Supported Protocol capabilities,
+ * and the operational registers move out of its way.  CAPLENGTH is
+ * therefore 0x40 or 0x80 depending on whether the DbC is present.
+ */
+#define OFF_DBC         LEN_CAP
 #define OFF_OPER        LEN_CAP
+#define OFF_OPER_DBC    (LEN_CAP + XHCI_DBC_LEN)
 #define OFF_RUNTIME     0x1000
 #define OFF_DOORBELL    0x2000
 
-#if (OFF_OPER + LEN_OPER) > OFF_RUNTIME
+#if (OFF_OPER_DBC + LEN_OPER) > OFF_RUNTIME
 #error Increase OFF_RUNTIME
 #endif
 #if (OFF_RUNTIME + LEN_RUNTIME) > OFF_DOORBELL
@@ -2626,6 +2636,11 @@ static void xhci_port_reset(XHCIPort *port, bool warm_reset)
     xhci_port_notify(port, PORTSC_PRC);
 }
 
+/*
+ * Host controller reset.  Whether this also resets the Debug Capability is
+ * up to the implementation and is reported to software in DCST.SBR, so the
+ * DbC decides for itself - see xhci_dbc_hc_reset().
+ */
 static void xhci_hc_reset(XHCIState *xhci)
 {
     int i;
@@ -2673,7 +2688,10 @@ static void xhci_hc_reset(XHCIState *xhci)
 
 static void xhci_reset(DeviceState *dev)
 {
-    xhci_hc_reset(XHCI(dev));
+    XHCIState *xhci = XHCI(dev);
+
+    xhci_hc_reset(xhci);
+    xhci_dbc_reset(xhci);
 }
 
 static uint64_t xhci_cap_read(void *ptr, hwaddr reg, unsigned size)
@@ -2683,7 +2701,7 @@ static uint64_t xhci_cap_read(void *ptr, hwaddr reg, unsigned size)
 
     switch (reg) {
     case 0x00: /* HCIVERSION, CAPLENGTH */
-        ret = 0x01000000 | LEN_CAP;
+        ret = 0x01000000 | xhci->off_oper;
         break;
     case 0x04: /* HCSPARAMS 1 */
         ret = ((xhci->numports_2+xhci->numports_3)<<24)
@@ -2724,6 +2742,10 @@ static uint64_t xhci_cap_read(void *ptr, hwaddr reg, unsigned size)
         break;
     case 0x30: /* Supported Protocol:00 */
         ret = 0x03000002; /* USB 3.0 */
+        if (xhci_dbc_enabled(xhci)) {
+            /* next capability: the Debug Capability, four dwords along */
+            ret |= 0x04 << 8;
+        }
         break;
     case 0x34: /* Supported Protocol:04 */
         ret = 0x20425355; /* "USB " */
@@ -2920,6 +2942,7 @@ static void xhci_oper_write(void *ptr, hwaddr reg,
         xhci_mfwrap_update(xhci);
         if (val & USBCMD_HCRST) {
             xhci_hc_reset(xhci);
+            xhci_dbc_hc_reset(xhci);
         }
         xhci_intr_update(xhci, 0);
         break;
@@ -3351,6 +3374,8 @@ static void usb_xhci_realize(DeviceState *dev, Error **errp)
     }
 
     usb_xhci_init(xhci);
+    xhci_dbc_realize(xhci);
+    xhci->off_oper = xhci_dbc_enabled(xhci) ? OFF_OPER_DBC : OFF_OPER;
     xhci->mfwrap_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, xhci_mfwrap_timer, xhci);
 
     memory_region_init(&xhci->mem, OBJECT(dev), "xhci", XHCI_LEN_REGS);
@@ -3364,13 +3389,20 @@ static void usb_xhci_realize(DeviceState *dev, Error **errp)
                            xhci, "doorbell", LEN_DOORBELL);
 
     memory_region_add_subregion(&xhci->mem, 0,            &xhci->mem_cap);
-    memory_region_add_subregion(&xhci->mem, OFF_OPER,     &xhci->mem_oper);
+    memory_region_add_subregion(&xhci->mem, xhci->off_oper,
+                                &xhci->mem_oper);
     memory_region_add_subregion(&xhci->mem, OFF_RUNTIME,  &xhci->mem_runtime);
     memory_region_add_subregion(&xhci->mem, OFF_DOORBELL, &xhci->mem_doorbell);
 
+    if (xhci_dbc_enabled(xhci)) {
+        memory_region_init_io(&xhci->mem_dbc, OBJECT(dev), &xhci_dbc_ops,
+                              &xhci->dbc, "debug-capability", XHCI_DBC_LEN);
+        memory_region_add_subregion(&xhci->mem, OFF_DBC, &xhci->mem_dbc);
+    }
+
     for (i = 0; i < xhci->numports; i++) {
         XHCIPort *port = &xhci->ports[i];
-        uint32_t offset = OFF_OPER + 0x400 + 0x10 * i;
+        uint32_t offset = xhci->off_oper + 0x400 + 0x10 * i;
         port->xhci = xhci;
         memory_region_init_io(&port->mem, OBJECT(dev), &xhci_port_ops, port,
                               port->name, 0x10);
@@ -3394,10 +3426,15 @@ static void usb_xhci_unrealize(DeviceState *dev)
         xhci->mfwrap_timer = NULL;
     }
 
+    xhci_dbc_unrealize(xhci);
+
     memory_region_del_subregion(&xhci->mem, &xhci->mem_cap);
     memory_region_del_subregion(&xhci->mem, &xhci->mem_oper);
     memory_region_del_subregion(&xhci->mem, &xhci->mem_runtime);
     memory_region_del_subregion(&xhci->mem, &xhci->mem_doorbell);
+    if (xhci_dbc_enabled(xhci)) {
+        memory_region_del_subregion(&xhci->mem, &xhci->mem_dbc);
+    }
 
     for (i = 0; i < xhci->numports; i++) {
         XHCIPort *port = &xhci->ports[i];
@@ -3567,6 +3604,10 @@ const VMStateDescription vmstate_xhci = {
         VMSTATE_STRUCT(cmd_ring, XHCIState, 1, vmstate_xhci_ring, XHCIRing),
 
         VMSTATE_END_OF_LIST()
+    },
+    .subsections = (const VMStateDescription * const []) {
+        &vmstate_xhci_dbc,
+        NULL
     }
 };
 
@@ -3577,6 +3618,10 @@ static const Property xhci_properties[] = {
     DEFINE_PROP_UINT32("p3",    XHCIState, numports_3, 4),
     DEFINE_PROP_LINK("host",    XHCIState, hostOpaque, TYPE_DEVICE,
                      DeviceState *),
+    DEFINE_PROP_BOOL("dbc",     XHCIState, dbc.prop_enabled, false),
+    DEFINE_PROP_CHR("dbc-chardev", XHCIState, dbc.chr),
+    DEFINE_PROP_BOOL("dbc-sbr", XHCIState, dbc.sbr, false),
+    DEFINE_PROP_CHR("dbc-control-chardev", XHCIState, dbc.ctrl),
 };
 
 static void xhci_class_init(ObjectClass *klass, const void *data)
@@ -3587,6 +3632,20 @@ static void xhci_class_init(ObjectClass *klass, const void *data)
     dc->unrealize = usb_xhci_unrealize;
     device_class_set_legacy_reset(dc, xhci_reset);
     device_class_set_props(dc, xhci_properties);
+    object_class_property_set_description(klass, "dbc",
+        "Advertise the xHCI Debug Capability.  Implied by dbc-chardev.");
+    object_class_property_set_description(klass, "dbc-chardev",
+        "Chardev the two Debug Capability bulk endpoints are bridged to, "
+        "i.e. the machine at the far end of the debug cable.");
+    object_class_property_set_description(klass, "dbc-sbr",
+        "Report DCST.SBR, i.e. that only a chip or system bus reset resets "
+        "the Debug Capability and a host controller reset does not. "
+        "Off (the default) means HCRST resets the DbC.");
+    object_class_property_set_description(klass, "dbc-control-chardev",
+        "Chardev on which the debug host injects the link events it would "
+        "otherwise signal over USB: r/w reset, d deconfigure, c "
+        "ClearFeature(ENDPOINT_HALT), e link error, x config error, k "
+        "retrain. Makes the DbC-Resetting and DbC-Error states reachable.");
     dc->user_creatable = false;
 }
 
