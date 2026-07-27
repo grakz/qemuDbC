@@ -2626,9 +2626,8 @@ static void xhci_port_reset(XHCIPort *port, bool warm_reset)
     xhci_port_notify(port, PORTSC_PRC);
 }
 
-static void xhci_reset(DeviceState *dev)
+static void xhci_hc_reset(XHCIState *xhci)
 {
-    XHCIState *xhci = XHCI(dev);
     int i;
 
     trace_usb_xhci_reset();
@@ -2670,6 +2669,11 @@ static void xhci_reset(DeviceState *dev)
 
     xhci->mfindex_start = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     xhci_mfwrap_update(xhci);
+}
+
+static void xhci_reset(DeviceState *dev)
+{
+    xhci_hc_reset(XHCI(dev));
 }
 
 static uint64_t xhci_cap_read(void *ptr, hwaddr reg, unsigned size)
@@ -2915,7 +2919,7 @@ static void xhci_oper_write(void *ptr, hwaddr reg,
         xhci->usbcmd = val & 0xc0f;
         xhci_mfwrap_update(xhci);
         if (val & USBCMD_HCRST) {
-            xhci_reset(DEVICE(xhci));
+            xhci_hc_reset(xhci);
         }
         xhci_intr_update(xhci, 0);
         break;
