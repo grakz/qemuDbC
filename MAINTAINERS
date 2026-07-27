@@ -2285,6 +2285,7 @@ S: Orphan
 F: hw/usb/*
 F: tests/qtest/usb-*-test.c
 F: docs/system/devices/usb.rst
+F: docs/system/devices/xhci-dbc.rst
 F: include/hw/usb.h
 F: include/hw/usb/
 

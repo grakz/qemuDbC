@@ -98,3 +98,4 @@ Emulated Devices
    devices/usb-u2f.rst
    devices/usb.rst
    devices/vfio-user.rst
+   devices/xhci-dbc.rst
