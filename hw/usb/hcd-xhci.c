@@ -127,15 +127,6 @@
 
 #define ERDP_EHB        (1<<3)
 
-#define TRB_SIZE 16
-typedef struct XHCITRB {
-    uint64_t parameter;
-    uint32_t status;
-    uint32_t control;
-    dma_addr_t addr;
-    bool ccs;
-} XHCITRB;
-
 enum {
     PLS_U0              =  0,
     PLS_U1              =  1,
@@ -153,54 +144,6 @@ enum {
 };
 
 #define CR_LINK TR_LINK
-
-#define TRB_C               (1<<0)
-#define TRB_TYPE_SHIFT          10
-#define TRB_TYPE_MASK       0x3f
-#define TRB_TYPE(t)         (((t).control >> TRB_TYPE_SHIFT) & TRB_TYPE_MASK)
-
-#define TRB_EV_ED           (1<<2)
-
-#define TRB_TR_ENT          (1<<1)
-#define TRB_TR_ISP          (1<<2)
-#define TRB_TR_NS           (1<<3)
-#define TRB_TR_CH           (1<<4)
-#define TRB_TR_IOC          (1<<5)
-#define TRB_TR_IDT          (1<<6)
-#define TRB_TR_TBC_SHIFT        7
-#define TRB_TR_TBC_MASK     0x3
-#define TRB_TR_BEI          (1<<9)
-#define TRB_TR_TLBPC_SHIFT      16
-#define TRB_TR_TLBPC_MASK   0xf
-#define TRB_TR_FRAMEID_SHIFT    20
-#define TRB_TR_FRAMEID_MASK 0x7ff
-#define TRB_TR_SIA          (1<<31)
-
-#define TRB_TR_DIR          (1<<16)
-
-#define TRB_CR_SLOTID_SHIFT     24
-#define TRB_CR_SLOTID_MASK  0xff
-#define TRB_CR_EPID_SHIFT       16
-#define TRB_CR_EPID_MASK    0x1f
-
-#define TRB_CR_BSR          (1<<9)
-#define TRB_CR_DC           (1<<9)
-
-#define TRB_LK_TC           (1<<1)
-
-#define TRB_INTR_SHIFT          22
-#define TRB_INTR_MASK       0x3ff
-#define TRB_INTR(t)         (((t).status >> TRB_INTR_SHIFT) & TRB_INTR_MASK)
-
-#define EP_TYPE_MASK        0x7
-#define EP_TYPE_SHIFT           3
-
-#define EP_STATE_MASK       0x7
-#define EP_DISABLED         (0<<0)
-#define EP_RUNNING          (1<<0)
-#define EP_HALTED           (2<<0)
-#define EP_STOPPED          (3<<0)
-#define EP_ERROR            (4<<0)
 
 #define SLOT_STATE_MASK     0x1f
 #define SLOT_STATE_SHIFT        27
@@ -294,13 +237,6 @@ struct XHCIEPContext {
     int64_t mfindex_last;
     QEMUTimer *kick_timer;
 };
-
-typedef struct XHCIEvRingSeg {
-    uint32_t addr_low;
-    uint32_t addr_high;
-    uint32_t size;
-    uint32_t rsvd;
-} XHCIEvRingSeg;
 
 static void xhci_kick_ep(XHCIState *xhci, unsigned int slotid,
                          unsigned int epid, unsigned int streamid);
